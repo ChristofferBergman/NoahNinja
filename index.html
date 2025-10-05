@@ -1,0 +1,153 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ninja Gesture Game</title>
+<style>
+  body { margin:0; background:#111; overflow:hidden; font-family:sans-serif; }
+  canvas { display:block; background:linear-gradient(to top,#333,#555); cursor:crosshair; }
+  #powerupMenu {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(0,0,0,0.9); color:#fff; padding:30px; border-radius:15px;
+    text-align:center; display:none; z-index:100;
+  }
+  #powerupMenu button {
+    margin:10px; padding:12px 25px; font-size:18px; border-radius:8px;
+    cursor:pointer; background:#222; color:#fff; border:none;
+  }
+  #powerupMenu button:hover { background:#444; }
+  #xpDisplay { position:absolute; top:10px; left:10px; color:#ff0; font-size:18px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="xpDisplay">XP: 0/5</div>
+<div id="powerupMenu">
+  <h2>Choose a Power-up!</h2>
+  <button id="powerThrow">Increase Throw Power</button>
+  <button id="powerAttack">Longer Attack Mode</button>
+  <button id="powerSlowmo">Stronger Slowmo</button>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+let width = window.innerWidth, height = window.innerHeight;
+canvas.width = width; canvas.height = height;
+
+const baseGravity = 0.8;
+let gameOver = false, slowMotion = 1, attackTimeout = null;
+
+const hillAmplitude = 80;
+const hillFrequency = 0.002;
+function getGroundY(x){ return height*0.8 + Math.sin(x*hillFrequency)*hillAmplitude; }
+
+const ninja = { x:width*0.2, y:getGroundY(width*0.2)-20, vx:0, vy:0, size:40, color:"#fff", attacking:false };
+
+let enemies = [];
+function spawnEnemy() {
+  const fromLeft = Math.random()<0.5;
+  enemies.push({ x: fromLeft?-50:width+50, y:getGroundY(fromLeft?0:width)-20, size:40, color:"#0f0", dead:false, dir:fromLeft?1:-1, speed:2+Math.random()*1.5 });
+}
+
+let gesture = { active:false, startX:0, startY:0, currentX:0, currentY:0 };
+
+// XP & Power-ups
+let xp = 0, xpToLevel = 5, maxThrowPower = 25, attackDuration = 400, baseSlowMo = 0.3, slowMoMultiplier = 1;
+let floatingTexts = [];
+
+const xpDisplay = document.getElementById("xpDisplay");
+const powerupMenu = document.getElementById("powerupMenu");
+const powerThrowBtn = document.getElementById("powerThrow");
+const powerAttackBtn = document.getElementById("powerAttack");
+const powerSlowmoBtn = document.getElementById("powerSlowmo");
+
+function updateXPDisplay(){ xpDisplay.textContent = `XP: ${xp}/${xpToLevel}`; }
+function showPowerupMenu(){ powerupMenu.style.display="block"; slowMotion=0; }
+function hidePowerupMenu(){ powerupMenu.style.display="none"; slowMotion=1; xp=0; xpToLevel+=5; updateXPDisplay(); }
+
+powerThrowBtn.addEventListener("click", ()=>{ maxThrowPower+=15; hidePowerupMenu(); });
+powerAttackBtn.addEventListener("click", ()=>{ attackDuration+=300; hidePowerupMenu(); });
+powerSlowmoBtn.addEventListener("click", ()=>{ slowMoMultiplier*=0.5; hidePowerupMenu(); });
+
+function drawGround(){ ctx.beginPath(); ctx.moveTo(0,getGroundY(0));
+for(let x=0;x<=width;x+=10) ctx.lineTo(x,getGroundY(x));
+ctx.lineTo(width,height); ctx.lineTo(0,height); ctx.closePath(); ctx.fillStyle="#222"; ctx.fill(); }
+
+function drawNinja(){ ctx.save(); ctx.translate(ninja.x,ninja.y); ctx.strokeStyle=ninja.color; ctx.lineWidth=4; ctx.lineCap="round";
+ctx.beginPath(); ctx.arc(0,-ninja.size,8,0,Math.PI*2); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(0,-ninja.size+8); ctx.lineTo(0,0); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(0,-ninja.size/2); ctx.lineTo(-10,-ninja.size/4); ctx.moveTo(0,-ninja.size/2); ctx.lineTo(10,-ninja.size/4); ctx.stroke();
+ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(-10,15); ctx.moveTo(0,0); ctx.lineTo(10,15); ctx.stroke();
+ctx.strokeStyle="red"; ctx.beginPath(); ctx.moveTo(-6,-ninja.size-5); ctx.lineTo(6,-ninja.size-5); ctx.stroke(); ctx.restore(); }
+
+function drawEnemies(){ for(let e of enemies){ ctx.fillStyle=e.color; ctx.fillRect(e.x-e.size/2,e.y-e.size,e.size,e.size); } }
+function drawAimLine(){ if(!gesture.active) return; ctx.strokeStyle="rgba(255,255,0,0.5)"; ctx.lineWidth=3;
+ctx.beginPath(); ctx.moveTo(gesture.startX,gesture.startY); ctx.lineTo(gesture.currentX,gesture.currentY); ctx.stroke();
+const dx=gesture.currentX-gesture.startX, dy=gesture.currentY-gesture.startY, dist=Math.sqrt(dx*dx+dy*dy);
+ctx.fillStyle="#ff0"; ctx.font="16px sans-serif"; ctx.fillText(`Power: ${Math.round(dist)}`,gesture.startX+10,gesture.startY-10); }
+
+function drawFloatingTexts(){ for(let i=floatingTexts.length-1;i>=0;i--){ const t=floatingTexts[i];
+ctx.fillStyle=`rgba(255,255,0,${t.alpha})`; ctx.font="20px sans-serif"; ctx.fillText("+1 XP",t.x,t.y);
+t.y-=0.5; t.alpha-=0.02; if(t.alpha<=0) floatingTexts.splice(i,1); } }
+
+function drawGameOver(){ ctx.fillStyle="rgba(0,0,0,0.6)"; ctx.fillRect(0,0,width,height);
+ctx.fillStyle="#fff"; ctx.font="48px sans-serif"; ctx.textAlign="center";
+ctx.fillText("💀 Game Over 💀",width/2,height/2); ctx.font="24px sans-serif";
+ctx.fillText("Reload to restart",width/2,height/2+50); }
+
+function updateNinja(dt){ ninja.vy+=baseGravity*dt; ninja.x+=ninja.vx*dt; ninja.y+=ninja.vy*dt;
+const groundHere=getGroundY(ninja.x); if(ninja.y>=groundHere-20){ ninja.y=groundHere-20; ninja.vy=0; ninja.vx*=0.98; } else ninja.vx*=0.977;
+if(ninja.x<20) ninja.x=20; if(ninja.x>width-20) ninja.x=width-20; if(ninja.y-ninja.size<0){ ninja.y=ninja.size; ninja.vy=0; }
+ninja.y=Math.min(ninja.y,groundHere-20); slowMotion = ninja.attacking?1:baseSlowMo*slowMoMultiplier; }
+
+function updateEnemies(dt){ for(let e of enemies){ e.x+=e.speed*e.dir*dt; if((e.dir===1 && e.x>ninja.x)||(e.dir===-1 && e.x<ninja.x)) e.dir*=-1; e.y=getGroundY(e.x)-20; }
+enemies.forEach(e=>{ const dx=ninja.x-e.x, dy=ninja.y-e.y, dist=Math.sqrt(dx*dx+dy*dy);
+if(dist<30 && ninja.attacking && !e.dead){ e.dead=true; xp+=1; floatingTexts.push({x:e.x,y:e.y-30,alpha:1}); updateXPDisplay(); if(xp>=xpToLevel) showPowerupMenu(); } });
+enemies=enemies.filter(e=>!e.dead && e.x>-100 && e.x<width+100); }
+
+function detectCollisions(){ for(let e of enemies){ const dx=ninja.x-e.x, dy=ninja.y-e.y, dist=Math.sqrt(dx*dx+dy*dy);
+if(dist<30){ if(ninja.attacking)e.dead=true; else{ ninja.dead=true; gameOver=true; } } } }
+
+function handleGesture(){
+  const dx=gesture.endX-gesture.startX, dy=gesture.endY-gesture.startY;
+  const dist=Math.sqrt(dx*dx+dy*dy); if(dist<5) return;
+  const power=Math.min(dist/5,maxThrowPower); const angle=Math.atan2(dy,dx);
+  ninja.vx=Math.cos(angle)*power; ninja.vy=Math.sin(angle)*power;
+  ninja.attacking=true; ninja.color="#ff0"; if(attackTimeout) clearTimeout(attackTimeout);
+  attackTimeout = setTimeout(()=>{ ninja.attacking=false; ninja.color="#fff"; attackTimeout=null; }, attackDuration);
+}
+
+// Mouse + Touch support
+function startGesture(e){ gesture.active=true; gesture.startX=e.clientX||e.touches[0].clientX; gesture.startY=e.clientY||e.touches[0].clientY; gesture.currentX=gesture.startX; gesture.currentY=gesture.startY; }
+function moveGesture(e){ if(!gesture.active) return; gesture.currentX=e.clientX||e.touches[0].clientX; gesture.currentY=e.clientY||e.touches[0].clientY; }
+function endGesture(e){ if(gameOver) return; gesture.active=false; gesture.endX=e.clientX||e.changedTouches[0].clientX; gesture.endY=e.clientY||e.changedTouches[0].clientY; handleGesture(); }
+
+canvas.addEventListener("mousedown",startGesture);
+canvas.addEventListener("mousemove",moveGesture);
+canvas.addEventListener("mouseup",endGesture);
+canvas.addEventListener("touchstart",startGesture);
+canvas.addEventListener("touchmove",moveGesture);
+canvas.addEventListener("touchend",endGesture);
+
+let lastTime=performance.now();
+function loop(currentTime){
+  const deltaTime=(currentTime-lastTime)/16.666; lastTime=currentTime; const dt=deltaTime*slowMotion;
+  ctx.clearRect(0,0,width,height);
+  drawGround(); drawEnemies(); drawNinja(); drawAimLine(); drawFloatingTexts();
+  if(!gameOver){ updateNinja(dt); updateEnemies(dt); detectCollisions(); } else drawGameOver();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function randomSpawnLoop(){ if(gameOver) return; spawnEnemy(); setTimeout(randomSpawnLoop,1000+Math.random()*2000); }
+randomSpawnLoop();
+
+window.addEventListener("resize",()=>{ width=window.innerWidth; height=window.innerHeight; canvas.width=width; canvas.height=height; });
+</script>
+</body>
+</html>
+index.html
+Visar index.html.
