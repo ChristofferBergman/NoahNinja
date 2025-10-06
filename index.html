@@ -125,10 +125,22 @@ function drawNinja(){
   ctx.restore();
 }
 
-function drawEnemies(){
-  for(let e of enemies){
-    ctx.fillStyle=e.color;
-    ctx.fillRect(e.x-e.size/2,e.y-e.size,e.size,e.size);
+function drawEnemies() {
+  for (let e of enemies) {
+    ctx.font = `${e.size}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+
+    // if dead, fade to gray and shrink slightly
+    if (e.dead) {
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = "#555";
+      ctx.fillText("💀", e.x, e.y);
+      ctx.globalAlpha = 1.0;
+    } else {
+      ctx.fillStyle = "#0f0";
+      ctx.fillText("👽", e.x, e.y);
+    }
   }
 }
 
